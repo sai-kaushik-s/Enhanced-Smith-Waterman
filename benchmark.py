@@ -15,13 +15,9 @@ import numpy as np
 matplotlib.rcParams["figure.dpi"] = 300
 matplotlib.rcParams["savefig.dpi"] = 300
 
-# ============================================================
-# CONFIGURABLE CONSTANTS FOR PATHS
-# ============================================================
 BASELINE_SCRIPT = "src/baseline/sw_baseline.py"
 OPTIMIZED_BINARY = "bin/sw_opt"
 OPTIMIZED_BINARY_RUN = "./bin/sw_opt"
-# ============================================================
 
 
 def run_benchmark(mode, N, T):
@@ -195,7 +191,6 @@ def create_plots():
 
     sizes, base_times, opt_times, size_speedups = benchmark_matrix_sizes()
 
-    # ---- Time vs Size ----
     plt.figure(figsize=(10, 6))
     valid_sizes = []
     valid_base = []
@@ -218,7 +213,6 @@ def create_plots():
     plt.savefig("plots/time_vs_size.png")
     plt.close()
 
-    # ---- Speedup vs Size ----
     plt.figure(figsize=(10, 6))
     valid_sizes_speedup = []
     valid_speedups = []
@@ -238,7 +232,6 @@ def create_plots():
     plt.savefig("plots/speedup_vs_size.png")
     plt.close()
 
-    # ---- Thread Scaling ----
     threads, base_times_t, opt_times_t, thread_speedups = benchmark_thread_scaling()
 
     plt.figure(figsize=(10, 6))
@@ -265,7 +258,6 @@ def create_plots():
     plt.savefig("plots/time_vs_threads.png")
     plt.close()
 
-    # ---- Speedup vs Thread Count ----
     plt.figure(figsize=(10, 6))
     valid_threads_speedup = []
     valid_speedups_t = []
