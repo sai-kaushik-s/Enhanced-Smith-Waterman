@@ -83,85 +83,169 @@ int smith_waterman_avx2(const char *seq1, const char *seq2,
         }
 
         // #pragma omp parallel for schedule(static) reduction(max:global_max)
-        for (int t = 0; t < Ld; t += 16) {
-            int block = Ld - t;
-            if (block > 16) block = 16;
+        for (int t = 0; t < Ld; t += 32) {
 
-            int i0 = i_min_d + t;   /* lane 0의 i */
-            int j0 = d - i0;        /* lane 0의 j */
+            /* ---------------------- block 0: offset = t ---------------------- */
+            int off0   = t;
+            int block0 = MIN(16, Ld - off0);
 
-            int base_diag = (i0 - 1) - i_min_d2;   // k=0일 때 (i-1)의 인덱스
-            int base_up   = (i0 - 1) - i_min_d1;   // (i-1, j)
-            int base_left =  i0      - i_min_d1;   // (i, j-1)
-            for (int k = 0; k < 16; k++) {
-                if (k < block) {
-                    int i = i0 + k;       /* 1..len1 */
-                    int j = j0 - k;       /* 1..len2 */
+            if (block0 > 0) {
+                int i0 = i_min_d + off0; /* lane0 의 i */
+                int j0 = d - i0;         /* lane0 의 j */
 
-                    diag_buf[k] = 0;
-                    up_buf[k]   = 0;
-                    left_buf[k] = 0;
+                int16_t diag0[16], up0[16], left0[16];
+                int16_t sub0[16],  h0[16];
 
-                    /* (i-1, j-1) on d-2 */
-                    if (d2 >= 2 && i > 1 && j > 1) {
-                        int idx = base_diag + k;
-                        if (idx >= 0 && idx <= (i_max_d2 - i_min_d2)) {
-                            diag_buf[k] = Dm2[idx];
+                int base_diag0 = (i0 - 1) - i_min_d2; /* (i-1,j-1)용 */
+                int base_up0   = (i0 - 1) - i_min_d1; /* (i-1,j)   용 */
+                int base_left0 =  i0      - i_min_d1; /* (i,  j-1) 용 */
+
+                int len_d1 = i_max_d1 - i_min_d1;     /* d-1 길이 (0..len_d1) */
+
+                for (int k = 0; k < 16; k++) {
+                    if (k < block0) {
+                        int i = i0 + k;
+                        int j = j0 - k;
+
+                        diag0[k] = 0;
+                        up0[k]   = 0;
+                        left0[k] = 0;
+
+                        /* (i-1, j-1) from d-2 */
+                        if (d2 >= 2 && i > 1 && j > 1) {
+                            int idx = base_diag0 + k;
+                            if (idx >= 0 && idx <= (i_max_d2 - i_min_d2))
+                                diag0[k] = Dm2[idx];
                         }
-                    }
 
-                    /* (i-1, j) on d-1 */
-                    if (d1 >= 2 && i > 1) {
-                        int idx = base_up + k;
-                        if (idx >= 0 && idx <= (i_max_d1 - i_min_d1)) {
-                            up_buf[k] = Dm1[idx];
+                        /* (i-1, j) from d-1 */
+                        if (d1 >= 2 && i > 1) {
+                            int idx_up = base_up0 + k;
+                            if (idx_up >= 0 && idx_up <= len_d1)
+                                up0[k] = Dm1[idx_up];
                         }
-                    }
 
-                    /* (i, j-1) on d-1 */
-                    if (d1 >= 2 && j > 1) {
-                        int idx = base_left + k;
-                        if (idx >= 0 && idx <= (i_max_d1 - i_min_d1)) {
-                            left_buf[k] = Dm1[idx];
+                        /* (i, j-1) from d-1 */
+                        if (d1 >= 2 && j > 1) {
+                            int idx_left = base_left0 + k;
+                            if (idx_left >= 0 && idx_left <= len_d1)
+                                left0[k] = Dm1[idx_left];
                         }
-                    }
 
-                    /* substitution score */
-                    sub_buf[k] = (seq1[i - 1] == seq2[j - 1])
-                               ? (int16_t)MATCH
-                               : (int16_t)MISMATCH;
-                } else {
-                    /* block 밖은 그냥 0으로 채움 */
-                    diag_buf[k] = 0;
-                    up_buf[k]   = 0;
-                    left_buf[k] = 0;
-                    sub_buf[k]  = 0;
+                        /* substitution score */
+                        sub0[k] = (seq1[i - 1] == seq2[j - 1])
+                                ? (int16_t)MATCH
+                                : (int16_t)MISMATCH;
+                    } else {
+                        diag0[k] = 0;
+                        up0[k]   = 0;
+                        left0[k] = 0;
+                        sub0[k]  = 0;
+                    }
+                }
+
+                __m256i vDiag0  = _mm256_loadu_si256((__m256i *)diag0);
+                __m256i vUp0    = _mm256_loadu_si256((__m256i *)up0);
+                __m256i vLeft0  = _mm256_loadu_si256((__m256i *)left0);
+                __m256i vSub0   = _mm256_loadu_si256((__m256i *)sub0);
+
+                __m256i vMatch0 = _mm256_add_epi16(vDiag0, vSub0);
+                vUp0            = _mm256_add_epi16(vUp0,   vGap);
+                vLeft0          = _mm256_add_epi16(vLeft0, vGap);
+
+                __m256i vH0 = _mm256_max_epi16(vMatch0, vUp0);
+                vH0         = _mm256_max_epi16(vH0,     vLeft0);
+                vH0         = _mm256_max_epi16(vH0,     vZero);
+
+                _mm256_storeu_si256((__m256i *)h0, vH0);
+
+                for (int k = 0; k < block0; k++) {
+                    int16_t h = h0[k];
+                    D[off0 + k] = h;
+                    if (h > global_max)
+                        global_max = h;
                 }
             }
 
-            /* --- AVX2로 16셀 DP --- */
-            __m256i vDiag  = _mm256_loadu_si256((__m256i *)diag_buf);
-            __m256i vUp    = _mm256_loadu_si256((__m256i *)up_buf);
-            __m256i vLeft  = _mm256_loadu_si256((__m256i *)left_buf);
-            __m256i vSub   = _mm256_loadu_si256((__m256i *)sub_buf);
+            /* ---------------------- block 1: offset = t+16 ------------------- */
+            int off1   = t + 16;
+            int block1 = MIN(16, Ld - off1);
 
-            __m256i vMatch = _mm256_add_epi16(vDiag, vSub);
-            vUp   = _mm256_add_epi16(vUp,   vGap);
-            vLeft   = _mm256_add_epi16(vLeft, vGap);
+            if (block1 > 0) {
+                int i1 = i_min_d + off1;
+                int j1 = d - i1;
 
-            __m256i vH     = _mm256_max_epi16(vMatch, vUp);
-            vH = _mm256_max_epi16(vH, vLeft);
-            vH = _mm256_max_epi16(vH, vZero);  /* local alignment */
+                int16_t diag1[16], up1[16], left1[16];
+                int16_t sub1[16],  h1[16];
 
-            _mm256_storeu_si256((__m256i *)h_buf, vH);
+                int base_diag1 = (i1 - 1) - i_min_d2;
+                int base_up1   = (i1 - 1) - i_min_d1;
+                int base_left1 =  i1      - i_min_d1;
 
-            /* 결과 저장 + global_max 갱신 */
-            for (int k = 0; k < block; k++) {
-                int h = h_buf[k];
-                D[t + k] = h;
-                if (h > global_max) global_max = h;
+                int len_d1 = i_max_d1 - i_min_d1;
+
+                for (int k = 0; k < 16; k++) {
+                    if (k < block1) {
+                        int i = i1 + k;
+                        int j = j1 - k;
+
+                        diag1[k] = 0;
+                        up1[k]   = 0;
+                        left1[k] = 0;
+
+                        if (d2 >= 2 && i > 1 && j > 1) {
+                            int idx = base_diag1 + k;
+                            if (idx >= 0 && idx <= (i_max_d2 - i_min_d2))
+                                diag1[k] = Dm2[idx];
+                        }
+
+                        if (d1 >= 2 && i > 1) {
+                            int idx_up = base_up1 + k;
+                            if (idx_up >= 0 && idx_up <= len_d1)
+                                up1[k] = Dm1[idx_up];
+                        }
+
+                        if (d1 >= 2 && j > 1) {
+                            int idx_left = base_left1 + k;
+                            if (idx_left >= 0 && idx_left <= len_d1)
+                                left1[k] = Dm1[idx_left];
+                        }
+
+                        sub1[k] = (seq1[i - 1] == seq2[j - 1])
+                                ? (int16_t)MATCH
+                                : (int16_t)MISMATCH;
+                    } else {
+                        diag1[k] = 0;
+                        up1[k]   = 0;
+                        left1[k] = 0;
+                        sub1[k]  = 0;
+                    }
+                }
+
+                __m256i vDiag1  = _mm256_loadu_si256((__m256i *)diag1);
+                __m256i vUp1    = _mm256_loadu_si256((__m256i *)up1);
+                __m256i vLeft1  = _mm256_loadu_si256((__m256i *)left1);
+                __m256i vSub1   = _mm256_loadu_si256((__m256i *)sub1);
+
+                __m256i vMatch1 = _mm256_add_epi16(vDiag1, vSub1);
+                vUp1            = _mm256_add_epi16(vUp1,   vGap);
+                vLeft1          = _mm256_add_epi16(vLeft1, vGap);
+
+                __m256i vH1 = _mm256_max_epi16(vMatch1, vUp1);
+                vH1         = _mm256_max_epi16(vH1,     vLeft1);
+                vH1         = _mm256_max_epi16(vH1,     vZero);
+
+                _mm256_storeu_si256((__m256i *)h1, vH1);
+
+                for (int k = 0; k < block1; k++) {
+                    int16_t h = h1[k];
+                    D[off1 + k] = h;
+                    if (h > global_max)
+                        global_max = h;
+                }
             }
         }
+
 
         /* --- 대각선 포인터 롤링 --- */
         tmp = Dm2; Dm2 = Dm1; Dm1 = D; D = tmp;
