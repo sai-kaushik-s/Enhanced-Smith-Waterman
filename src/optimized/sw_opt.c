@@ -4,10 +4,10 @@
 #include <time.h>
 #include <immintrin.h>
 #include <stdint.h>
-
 #include <omp.h>
 
 #define MAX(A,B) ((A) > (B) ? (A) : (B))
+#define MIN(A,B) ((A) < (B) ? (A) : (B))
 #define MATCH     2
 #define MISMATCH -1
 #define GAP      -2
@@ -35,136 +35,101 @@ static inline int get_from_diag(const int *diag,
     return diag[i - i_min];
 }
 
-int smith_waterman_avx2(const char *seq1, const char *seq2, int len1, int len2)
+int smith_waterman_avx2(const char *seq1, const char *seq2,
+                                  int len1, int len2)
 {
-    /* --- 스칼라 변수 선언부 (한 줄씩 묶어서) --- */
     int max_diag_len, d, d_end, i_min_d, i_max_d, Ld;
-    int d1, d2, i_min_d1, i_max_d1, i_min_d2, i_max_d2;
-    int has_d1, has_d2, t, block, i0, j0;
-    int global_max;
+    int d1, d2, i_min_d1, i_max_d1, i_min_d2, i_max_d2;\
+    int global_max=0;
 
-    int16_t *Dm2, *Dm1, *D;
-    int16_t *tmp;
+    int16_t *Dm2, *Dm1, *D, *tmp;
+    int16_t diag_buf[16], up_buf[16], left_buf[16], sub_buf[16], h_buf[16];
 
     __m256i vGap, vZero;
 
-    /* --- 길이 체크 --- */
-    if (len1 <= 0 || len2 <= 0) return 0;
-
     max_diag_len = (len1 < len2) ? len1 : len2;
 
-    Dm2 = (int16_t *)malloc(max_diag_len * sizeof(int16_t));
-    Dm1 = (int16_t *)malloc(max_diag_len * sizeof(int16_t));
+    Dm2 = (int16_t *)calloc(max_diag_len, sizeof(int16_t));
+    Dm1 = (int16_t *)calloc(max_diag_len, sizeof(int16_t));
     D   = (int16_t *)malloc(max_diag_len * sizeof(int16_t));
-    if (!Dm2 || !Dm1 || !D) {
-        free(Dm2); free(Dm1); free(D);
-        return 0;
-    }
-
-    memset(Dm2, 0, max_diag_len * sizeof(int16_t));
-    memset(Dm1, 0, max_diag_len * sizeof(int16_t));
-
-    global_max = 0;
 
     vGap  = _mm256_set1_epi16((int16_t)GAP);
     vZero = _mm256_setzero_si256();
 
     d_end = len1 + len2;
-    
     for (d = 2; d <= d_end; d++) {
 
-        /* --- 현재 대각선 d의 i 범위 계산 --- */
-        i_min_d = d - len2;
-        if (i_min_d < 1) i_min_d = 1;
-        i_max_d = d - 1;
-        if (i_max_d > len1) i_max_d = len1;
-
+        i_min_d = MAX(1, d - len2); i_max_d = MIN(len1, d - 1);
+        
         if (i_min_d > i_max_d) {
-            /* 유효 셀이 없는 대각선 → 포인터만 롤링 */
             tmp = Dm2; Dm2 = Dm1; Dm1 = D; D = tmp;
             continue;
         }
 
         Ld = i_max_d - i_min_d + 1;
-
-        /* --- d-1, d-2 대각선 범위 미리 계산 --- */
         d1 = d - 1;
         d2 = d - 2;
 
-        has_d1 = (d1 >= 2);
-        has_d2 = (d2 >= 2);
-
-        if (has_d1) {
-            i_min_d1 = d1 - len2;
-            if (i_min_d1 < 1) i_min_d1 = 1;
-            i_max_d1 = d1 - 1;
-            if (i_max_d1 > len1) i_max_d1 = len1;
+        if (d1 >= 2) {
+            i_min_d1 = MAX(1, d1 - len2); i_max_d1 = MIN(len1,d1 - 1);
         } else {
             i_min_d1 = 1; i_max_d1 = 0;  /* empty */
         }
 
-        if (has_d2) {
-            i_min_d2 = d2 - len2;
-            if (i_min_d2 < 1) i_min_d2 = 1;
-            i_max_d2 = d2 - 1;
-            if (i_max_d2 > len1) i_max_d2 = len1;
+        if (d2 >= 2) {
+            i_min_d2 = MAX(1,d2 - len2); i_max_d2 = MIN(len1,d2 - 1);
         } else {
             i_min_d2 = 1; i_max_d2 = 0;
         }
 
-        /* --- 이 대각선을 16셀씩 AVX2로 처리 --- */
-        #pragma omp parallel for reduction(max: global_max)
-        for (t = 0; t < Ld; t += 16) {
-
-            int16_t diag_buf[16], up_buf[16], left_buf[16], sub_buf[16], h_buf[16];
-            int k, i, j, ii, idx;
-            int16_t h;
-
-            block = Ld - t;
+        // #pragma omp parallel for schedule(static) reduction(max:global_max)
+        for (int t = 0; t < Ld; t += 16) {
+            int block = Ld - t;
             if (block > 16) block = 16;
 
-            i0 = i_min_d + t;   /* lane 0의 i */
-            j0 = d - i0;        /* lane 0의 j */
+            int i0 = i_min_d + t;   /* lane 0의 i */
+            int j0 = d - i0;        /* lane 0의 j */
 
-            /* lane별로 diag/up/left/sub 값 scalar로 채워넣기 */
-            for (k = 0; k < 16; k++) {
+            int base_diag = (i0 - 1) - i_min_d2;   // k=0일 때 (i-1)의 인덱스
+            int base_up   = (i0 - 1) - i_min_d1;   // (i-1, j)
+            int base_left =  i0      - i_min_d1;   // (i, j-1)
+            for (int k = 0; k < 16; k++) {
                 if (k < block) {
-                    i = i0 + k;       /* 1..len1 */
-                    j = j0 - k;       /* 1..len2 */
+                    int i = i0 + k;       /* 1..len1 */
+                    int j = j0 - k;       /* 1..len2 */
 
                     diag_buf[k] = 0;
                     up_buf[k]   = 0;
                     left_buf[k] = 0;
 
-                    /* (i-1, j-1) → 대각선 d-2 */
-                    if (has_d2 && i > 1 && j > 1) {
-                        ii = i - 1;
-                        if (ii >= i_min_d2 && ii <= i_max_d2) {
-                            idx = ii - i_min_d2;
+                    /* (i-1, j-1) on d-2 */
+                    if (d2 >= 2 && i > 1 && j > 1) {
+                        int idx = base_diag + k;
+                        if (idx >= 0 && idx <= (i_max_d2 - i_min_d2)) {
                             diag_buf[k] = Dm2[idx];
                         }
                     }
 
-                    /* (i-1, j) → 대각선 d-1 */
-                    if (has_d1 && i > 1) {
-                        ii = i - 1;
-                        if (ii >= i_min_d1 && ii <= i_max_d1) {
-                            idx = ii - i_min_d1;
+                    /* (i-1, j) on d-1 */
+                    if (d1 >= 2 && i > 1) {
+                        int idx = base_up + k;
+                        if (idx >= 0 && idx <= (i_max_d1 - i_min_d1)) {
                             up_buf[k] = Dm1[idx];
                         }
                     }
 
-                    /* (i, j-1) → 대각선 d-1 */
-                    if (has_d1 && j > 1) {
-                        ii = i;
-                        if (ii >= i_min_d1 && ii <= i_max_d1) {
-                            idx = ii - i_min_d1;
+                    /* (i, j-1) on d-1 */
+                    if (d1 >= 2 && j > 1) {
+                        int idx = base_left + k;
+                        if (idx >= 0 && idx <= (i_max_d1 - i_min_d1)) {
                             left_buf[k] = Dm1[idx];
                         }
                     }
 
                     /* substitution score */
-                    sub_buf[k] = (seq1[i - 1] == seq2[j - 1]) ? (int16_t)MATCH : (int16_t)MISMATCH;
+                    sub_buf[k] = (seq1[i - 1] == seq2[j - 1])
+                               ? (int16_t)MATCH
+                               : (int16_t)MISMATCH;
                 } else {
                     /* block 밖은 그냥 0으로 채움 */
                     diag_buf[k] = 0;
@@ -179,19 +144,20 @@ int smith_waterman_avx2(const char *seq1, const char *seq2, int len1, int len2)
             __m256i vUp    = _mm256_loadu_si256((__m256i *)up_buf);
             __m256i vLeft  = _mm256_loadu_si256((__m256i *)left_buf);
             __m256i vSub   = _mm256_loadu_si256((__m256i *)sub_buf);
-            __m256i vMatch = _mm256_add_epi16(vDiag, vSub);
-            __m256i vDel   = _mm256_add_epi16(vUp,   vGap);
-            __m256i vIns   = _mm256_add_epi16(vLeft, vGap);
-            __m256i vH     = _mm256_max_epi16(vMatch, vDel);
 
-            vH = _mm256_max_epi16(vH, vIns);
+            __m256i vMatch = _mm256_add_epi16(vDiag, vSub);
+            vUp   = _mm256_add_epi16(vUp,   vGap);
+            vLeft   = _mm256_add_epi16(vLeft, vGap);
+
+            __m256i vH     = _mm256_max_epi16(vMatch, vUp);
+            vH = _mm256_max_epi16(vH, vLeft);
             vH = _mm256_max_epi16(vH, vZero);  /* local alignment */
 
             _mm256_storeu_si256((__m256i *)h_buf, vH);
 
             /* 결과 저장 + global_max 갱신 */
-            for (k = 0; k < block; k++) {
-                h = h_buf[k];
+            for (int k = 0; k < block; k++) {
+                int h = h_buf[k];
                 D[t + k] = h;
                 if (h > global_max) global_max = h;
             }
@@ -262,10 +228,7 @@ int main(int argc, char **argv) {
     }
 
     int N = atoi(argv[1]);
-    int num_threads = atoi(argv[2]);
     srand(42);
-
-    omp_set_num_threads(num_threads);
 
     char *seq1 = malloc((N + 1) * sizeof(char));
     char *seq2 = malloc((N + 1) * sizeof(char));
@@ -282,7 +245,6 @@ int main(int argc, char **argv) {
         int score = smith_waterman(seq1, seq2, N, N);
     #endif
     double t1 = omp_get_wtime();
-
     double elapsed = t1 - t0;
     printf("Sequence length: %d\n", N);
     printf("Smith-Waterman score: %d\n", score);
