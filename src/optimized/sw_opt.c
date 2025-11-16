@@ -82,7 +82,7 @@ int smith_waterman_avx2(const char *seq1, const char *seq2,
             i_min_d2 = 1; i_max_d2 = 0;
         }
 
-        // #pragma omp parallel for schedule(static) reduction(max:global_max)
+        #pragma omp parallel for schedule(static) reduction(max:global_max)
         for (int t = 0; t < Ld; t += 32) {
 
             /* ---------------------- block 0: offset = t ---------------------- */
@@ -320,14 +320,23 @@ int main(int argc, char **argv) {
     generate_sequence(seq1, N);
     generate_sequence(seq2, N);
 
+    int score;
+
     double t0 = omp_get_wtime();
-    #ifdef __AVX2__
-        int score = smith_waterman_avx2(seq1, seq2, N, N);
-    #elif defined(__AVX512F__)
-        int score = smith_waterman(seq1, seq2, N, N);
-    #else
-        int score = smith_waterman(seq1, seq2, N, N);
-    #endif
+
+    if (N > 4096) {
+        #ifdef __AVX2__
+            printf("Using AVX2 optimized Smith-Waterman\n");
+            score = smith_waterman_avx2(seq1, seq2, N, N);
+        #elif defined(__AVX512F__)
+            score = smith_waterman(seq1, seq2, N, N);
+        #else
+            score = smith_waterman(seq1, seq2, N, N);
+        #endif
+    } else {
+        printf("Using standard Smith-Waterman\n");
+        score = smith_waterman(seq1, seq2, N, N);
+    }
     double t1 = omp_get_wtime();
     double elapsed = t1 - t0;
     printf("Sequence length: %d\n", N);

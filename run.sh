@@ -150,8 +150,8 @@ elif [ "$MODE" = "perf" ]; then
         local CMD="$1"
         $PERF_BIN stat \
             -e cycles,instructions,branches,branch-misses,\
-            cache-references,cache-misses,L1-dcache-loads,L1-dcache-load-misses,\
-            L1-icache-loads,L1-icache-load-misses \
+cache-references,cache-misses,L1-dcache-loads,L1-dcache-load-misses,\
+L1-icache-loads,L1-icache-load-misses \
             $CMD 2>&1 | awk -v N_DIM="$N" '
                 $2 != "seconds" && $3 != "time" {
                     f1 = $1; f2 = $2
