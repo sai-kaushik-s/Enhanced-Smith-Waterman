@@ -273,7 +273,7 @@ int main(int argc, char **argv) {
     generate_sequence(seq1, N);
     generate_sequence(seq2, N);
 
-    clock_t start = clock();
+    double t0 = omp_get_wtime();
     #ifdef __AVX2__
         int score = smith_waterman_avx2(seq1, seq2, N, N);
     #elif defined(__AVX512F__)
@@ -281,9 +281,9 @@ int main(int argc, char **argv) {
     #else
         int score = smith_waterman(seq1, seq2, N, N);
     #endif
-    clock_t end = clock();
+    double t1 = omp_get_wtime();
 
-    double elapsed = (double)(end - start) / CLOCKS_PER_SEC;
+    double elapsed = t1 - t0;
     printf("Sequence length: %d\n", N);
     printf("Smith-Waterman score: %d\n", score);
     printf("Execution time: %.6f seconds\n", elapsed);
