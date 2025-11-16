@@ -5,6 +5,8 @@
 #include <immintrin.h>
 #include <stdint.h>
 
+#include <omp.h>
+
 #define MAX(A,B) ((A) > (B) ? (A) : (B))
 #define MATCH     2
 #define MISMATCH -1
@@ -33,18 +35,16 @@ static inline int get_from_diag(const int *diag,
     return diag[i - i_min];
 }
 
-int smith_waterman_avx2(const char *seq1, const char *seq2,
-                                  int len1, int len2)
+int smith_waterman_avx2(const char *seq1, const char *seq2, int len1, int len2)
 {
     /* --- 스칼라 변수 선언부 (한 줄씩 묶어서) --- */
     int max_diag_len, d, d_end, i_min_d, i_max_d, Ld;
     int d1, d2, i_min_d1, i_max_d1, i_min_d2, i_max_d2;
     int has_d1, has_d2, t, block, i0, j0;
-    int k, i, j, ii, idx, global_max;
+    int global_max;
 
     int16_t *Dm2, *Dm1, *D;
-    int16_t diag_buf[16], up_buf[16], left_buf[16], sub_buf[16], h_buf[16];
-    int16_t h, *tmp;
+    int16_t *tmp;
 
     __m256i vGap, vZero;
 
@@ -70,6 +70,7 @@ int smith_waterman_avx2(const char *seq1, const char *seq2,
     vZero = _mm256_setzero_si256();
 
     d_end = len1 + len2;
+    
     for (d = 2; d <= d_end; d++) {
 
         /* --- 현재 대각선 d의 i 범위 계산 --- */
@@ -112,7 +113,13 @@ int smith_waterman_avx2(const char *seq1, const char *seq2,
         }
 
         /* --- 이 대각선을 16셀씩 AVX2로 처리 --- */
+        #pragma omp parallel for reduction(max: global_max)
         for (t = 0; t < Ld; t += 16) {
+
+            int16_t diag_buf[16], up_buf[16], left_buf[16], sub_buf[16], h_buf[16];
+            int k, i, j, ii, idx;
+            int16_t h;
+
             block = Ld - t;
             if (block > 16) block = 16;
 
@@ -157,9 +164,7 @@ int smith_waterman_avx2(const char *seq1, const char *seq2,
                     }
 
                     /* substitution score */
-                    sub_buf[k] = (seq1[i - 1] == seq2[j - 1])
-                               ? (int16_t)MATCH
-                               : (int16_t)MISMATCH;
+                    sub_buf[k] = (seq1[i - 1] == seq2[j - 1]) ? (int16_t)MATCH : (int16_t)MISMATCH;
                 } else {
                     /* block 밖은 그냥 0으로 채움 */
                     diag_buf[k] = 0;
@@ -257,7 +262,10 @@ int main(int argc, char **argv) {
     }
 
     int N = atoi(argv[1]);
+    int num_threads = atoi(argv[2]);
     srand(42);
+
+    omp_set_num_threads(num_threads);
 
     char *seq1 = malloc((N + 1) * sizeof(char));
     char *seq2 = malloc((N + 1) * sizeof(char));
