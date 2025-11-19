@@ -54,11 +54,11 @@ elif [ "$MODE" = "compare" ]; then
 
     BASE_PERF_BIN="$PYTHON_BIN $PY_BASELINE"
     BASE_PERF_FILE="$PY_BASELINE"
-    BASE_CHECK_BIN="$C_BASELINE"
+    BASE_BIN="$C_BASELINE"
     OPT_BIN="$OPTIMIZED_BIN"
 
     require_file "$BASE_PERF_FILE"
-    require_exec "$BASE_CHECK_BIN"
+    require_exec "$BASE_BIN"
     require_exec "$OPT_BIN"
 
     echo "----------------------------------------"
@@ -66,7 +66,7 @@ elif [ "$MODE" = "compare" ]; then
     BASE_PERF_OUT=$( { $TIME_BIN -p $BASE_PERF_BIN "$N" "$P"; } 2>&1 )
 
     echo "2/3 Running C baseline (for checksum verification)..."
-    BASE_CHECK_OUT=$( { $TIME_BIN -p "$BASE_CHECK_BIN" "$N" "$P"; } 2>&1 )
+    BASE_OUT=$( { $TIME_BIN -p "$BASE_BIN" "$N" "$P"; } 2>&1 )
 
     echo "3/3 Running Optimized binary (for performance & checksum)..."
     OPT_OUT=$( { $TIME_BIN -p "$OPT_BIN" "$N" "$P"; } 2>&1 )
@@ -74,7 +74,7 @@ elif [ "$MODE" = "compare" ]; then
     echo "----------------------------------------"
     echo "Analyzing results..."
 
-    CHECK_BASE=$(echo "$BASE_CHECK_OUT" | awk '/Smith-Waterman score:/ {print $NF}')
+    CHECK_BASE=$(echo "$BASE_OUT" | awk '/Smith-Waterman score:/ {print $NF}')
     CHECK_OPT=$(echo "$OPT_OUT" | awk '/Smith-Waterman score:/ {print $NF}')
 
     TIME_BASE_INT=$(echo "$BASE_PERF_OUT" | awk '/Execution time:/ {print $3}')
@@ -84,7 +84,7 @@ elif [ "$MODE" = "compare" ]; then
 
     if [ -z "$CHECK_BASE" ] || [ -z "$CHECK_OPT" ]; then
         echo "Error: Could not parse checksums."
-        echo "Baseline (C) output: $BASE_CHECK_OUT"
+        echo "Baseline (C) output: $BASE_OUT"
         echo "Optimized output:    $OPT_OUT"
         exit 1
     fi
@@ -111,6 +111,71 @@ elif [ "$MODE" = "compare" ]; then
     echo -e "  \033[1mOptimized\033[0m: ${TIME_OPT_INT}s"
     echo -e "\033[1;34mTotal Running Time:\033[0m"
     echo -e "  \033[1mPython\033[0m:    ${TIME_BASE_REAL}s"
+    echo -e "  \033[1mOptimized\033[0m: ${TIME_OPT_REAL}s"
+    echo "----------------------------------------"
+
+    SPEEDUP_INT=$(awk "BEGIN {if ($TIME_OPT_INT > 0) printf \"%.2f\", $TIME_BASE_INT / $TIME_OPT_INT; else print \"N/A\"}")
+    SPEEDUP_REAL=$(awk "BEGIN {if ($TIME_OPT_REAL > 0) printf \"%.2f\", $TIME_BASE_REAL / $TIME_OPT_REAL; else print \"N/A\"}")
+
+    echo -e "\033[1;33mSpeedup (Internal):\033[0m  ${SPEEDUP_INT}x"
+    echo -e "\033[1;33mSpeedup (Real Time):\033[0m ${SPEEDUP_REAL}x"
+
+elif [ "$MODE" = "compare_cpp" ]; then
+    echo "Comparing C++ baseline and optimized implementations for N=$N, P=$P"
+
+    BASE_BIN="$C_BASELINE"
+    OPT_BIN="$OPTIMIZED_BIN"
+
+    require_exec "$BASE_BIN"
+    require_exec "$OPT_BIN"
+
+    echo "----------------------------------------"
+    echo "1/2 Running Baseline Binary..."
+    BASE_OUT=$( { $TIME_BIN -p "$BASE_BIN" "$N" "$P"; } 2>&1 )
+
+    echo "2/2 Running Optimized Binary..."
+    OPT_OUT=$( { $TIME_BIN -p "$OPT_BIN" "$N" "$P"; } 2>&1 )
+
+    echo "----------------------------------------"
+    echo "Analyzing results..."
+
+    CHECK_BASE=$(echo "$BASE_OUT" | awk '/Smith-Waterman score:/ {print $NF}')
+    CHECK_OPT=$(echo "$OPT_OUT" | awk '/Smith-Waterman score:/ {print $NF}')
+
+    TIME_BASE_INT=$(echo "$BASE_OUT" | awk '/Execution time:/ {print $3}')
+    TIME_BASE_REAL=$(echo "$BASE_OUT" | awk '/^real/ {print $2}')
+    TIME_OPT_INT=$(echo "$OPT_OUT" | awk '/Execution time:/ {print $3}')
+    TIME_OPT_REAL=$(echo "$OPT_OUT" | awk '/^real/ {print $2}')
+
+    if [ -z "$CHECK_BASE" ] || [ -z "$CHECK_OPT" ]; then
+        echo "Error: Could not parse checksums."
+        echo "Baseline (C) output: $BASE_OUT"
+        echo "Optimized output:    $OPT_OUT"
+        exit 1
+    fi
+
+    if [ "$CHECK_BASE" != "$CHECK_OPT" ]; then
+        echo "FAILED: Checksum mismatch!"
+        echo "Baseline (C): $CHECK_BASE"
+        echo "Optimized:    $CHECK_OPT"
+        exit 1
+    else
+        echo "SUCCESS: Checksums match ($CHECK_BASE)"
+    fi
+
+    echo "----------------------------------------"
+    echo "Performance Comparison..."
+
+    if [ -z "$TIME_BASE_INT" ] || [ -z "$TIME_OPT_INT" ]; then
+        echo "Error: Could not parse timing data."
+        exit 1
+    fi
+
+    echo -e "\033[1;32mInternal Running Time:\033[0m"
+    echo -e "  \033[1mBaseline\033[0m:    ${TIME_BASE_INT}s"
+    echo -e "  \033[1mOptimized\033[0m: ${TIME_OPT_INT}s"
+    echo -e "\033[1;34mTotal Running Time:\033[0m"
+    echo -e "  \033[1mBaseline\033[0m:    ${TIME_BASE_REAL}s"
     echo -e "  \033[1mOptimized\033[0m: ${TIME_OPT_REAL}s"
     echo "----------------------------------------"
 
