@@ -1,4 +1,5 @@
 CXX := gcc
+CPP := g++
 CXXFLAGS := -O3 -march=native -mfma -fopenmp -DNDEBUG -g
 LDFLAGS := -fopenmp -lnuma
 
@@ -6,7 +7,7 @@ BASELINE_DIR := src/baseline
 OPTIMIZED_DIR := src/optimized
 BUILD_DIR := bin
 OPTIMIZED_TARGET := $(BUILD_DIR)/sw_opt
-OPTIMIZED_SRC := $(OPTIMIZED_DIR)/sw_opt.c
+OPTIMIZED_SRC := $(OPTIMIZED_DIR)/sw_opt.cpp
 
 BASELINE_TARGET := $(BUILD_DIR)/sw_baseline
 BASELINE_SRC := $(BASELINE_DIR)/sw_baseline.c
@@ -15,7 +16,7 @@ all: $(OPTIMIZED_TARGET) $(BASELINE_TARGET)
 
 $(OPTIMIZED_TARGET): $(OPTIMIZED_SRC)
 	mkdir -p $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(OPTIMIZED_SRC) -o $(OPTIMIZED_TARGET) $(LDFLAGS)
+	$(CPP) $(CXXFLAGS) $(OPTIMIZED_SRC) -o $(OPTIMIZED_TARGET) $(LDFLAGS)
 
 $(BASELINE_TARGET): $(BASELINE_SRC)
 	mkdir -p $(BUILD_DIR)
