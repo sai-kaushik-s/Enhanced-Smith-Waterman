@@ -24,7 +24,7 @@ You must compile with:
 
 1.  **Target architecture flags**: `-march=native` (to enable AVX2/AVX-512)
 2.  **OpenMP enabled**: `-fopenmp`
-3.  **Fused Multiply-Add enabled**: `-mfma`
+3.  **Enable Loop Unrolling**: `-funroll-loops`
 4.  **High optimization level**: `-O3`
 
 ## 4. Experimental methodology
@@ -81,6 +81,41 @@ Comparing the baseline Python codes and optimized C++ codes with different threa
 ![Plot of speedup of the Smith-Waterman algorithm against the different thread count](plots/speedup_vs_threads.png)
 
 ## 6. Analysis
+
+The Smith–Waterman (SW) implementation was optimized using seven architecture-level techniques. These focused on increasing **Instruction-Level Parallelism (ILP)**, **Data-Level Parallelism (DLP)**, and **efficient cache utilization**. The strategy combined **algorithmic restructuring** to expose parallelism and **microarchitectural optimizations** for better computation and memory throughput.
+
+---
+
+### 6.1 Key Optimization Techniques
+
+| Technique                       | Category                  | Description                                                                | Rationale / Benefit                                                                |
+| ------------------------------- | ------------------------- | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| **Wavefront Parallelism**       | Algorithmic Restructuring | DP matrix is traversed along **anti-diagonals**, not rows.                 | Cells in a wavefront are independent → exposes safe parallelism.                   |
+| **Tiling (Cache Blocking)**     | Memory/Data Locality      | DP matrix is split into tiles sized to fit in **L1 cache**.                | Keeps working set cache-resident → minimizes cache misses.                         |
+| **Diagonalization**             | Algorithmic Restructuring | Each tile is computed diagonally like the main wavefront traversal.        | Maximizes ILP and prepares the loop for AVX vectorization.                         |
+| **Loop Unrolling**              | ILP Enhancement           | `-funroll-loops` used to reduce loop-control overhead in inner loop.       | Increases ILP by reducing branch overhead and allowing more concurrent scheduling. |
+| **AVX2/AVX-512 Vectorization**  | DLP Enhancement (SIMD)    | `#pragma omp simd` enables implicit vectorization of DP inner loop.        | Exploits SIMD → computes up to 16 (AVX2) / 32 (AVX-512) cells per instruction.     |
+| **OpenMP Parallelization**      | Thread-Level Parallelism  | Independent tiles within a wavefront are processed in parallel by threads. | Utilizes multicore CPUs; threads use `_mm_pause` until dependencies are resolved.  |
+| **NUMA-aware Memory Placement** | Memory System Efficiency  | Buffers allocated **after thread pinning** to exploit first-touch policy.  | Reduces cross-socket memory latency on NUMA architectures.                         |
+
+---
+
+### 6.2 Dependence and Execution Flow
+
+The design follows a **hierarchical parallelization strategy**:
+
+#### **1. Outer Loop — Tiling + OpenMP**
+
+- The DP matrix is broken into tiles.
+- Tiles on the same wavefront are **independent**.
+- These tiles are assigned to different OpenMP threads for concurrent execution.
+
+#### **2. Inner Loop — Diagonalization + AVX**
+
+- Each tile is computed **diagonally**, mirroring the main wavefront strategy.
+- This enables:
+  - **High ILP** (via loop unrolling)
+  - **High DLP** (via AVX2/AVX-512 SIMD vectorization)
 
 ## 7. Reproducibility
 
