@@ -13,7 +13,7 @@
 
 #define ROW_MAJOR 0
 #define DIAGONAL  1
-#define KERNEL_TYPE ROW_MAJOR
+#define KERNEL_TYPE DIAGONAL
 
 int BLOCK_SIZE = 64;
 int PREFETCH_DIST = 256;
