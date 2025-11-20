@@ -3,10 +3,10 @@ CXX := g++
 
 CFLAGS   := -O3 -march=native -mfma -fopenmp -DNDEBUG -g
 CXXFLAGS := -O3 -march=native -mfma -fopenmp -DNDEBUG -g -std=c++17
-LDFLAGS  := -fopenmp -lnuma
+LDFLAGS  := -fopenmp -lnuma -funroll-loops
 
 BASELINE_DIR   := src/baseline
-OPTIMIZED_DIR  := src/optimized
+OPTIMIZED_DIR  := src/optimized 
 BUILD_DIR      := bin
 
 BASELINE_TARGET  := $(BUILD_DIR)/sw_baseline

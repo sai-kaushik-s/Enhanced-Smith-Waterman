@@ -11,10 +11,6 @@
 #include <atomic>
 #include <memory>
 
-#define ROW_MAJOR 0
-#define DIAGONAL  1
-#define KERNEL_TYPE DIAGONAL
-
 int BLOCK_SIZE = 64;
 int PREFETCH_DIST = 256;
 
@@ -31,8 +27,8 @@ void computeSystemParams() {
     
     if (detectedL1 > 0) l1CacheSize = detectedL1;
     if (detectedLine > 0) cacheLineSize = detectedLine;
-  
-    int calculatedTile = (l1CacheSize / 2) / (3 * sizeof(int16_t));
+
+    int calculatedTile = (l1CacheSize * 0.8) / (3 * sizeof(int16_t));
     calculatedTile = (calculatedTile / 32) * 32;
 
     if (calculatedTile > 128) calculatedTile = 128;
@@ -43,7 +39,6 @@ void computeSystemParams() {
 
     std::cout << "[System Detect] L1 Cache: " << l1CacheSize / 1024 << "KB, Line Size: " << cacheLineSize << "B" << std::endl;
     std::cout << "[Auto Tune] BLOCK_SIZE: " << BLOCK_SIZE << ", PREFETCH_DIST: " << PREFETCH_DIST << std::endl;
-    std::cout << "[Kernel] Using: " << (KERNEL_TYPE == ROW_MAJOR ? "Row Major (Cache Optimized)" : "Diagonal (SIMD Optimized)") << std::endl;
 }
 
 std::string generateSequence(int length) {
@@ -53,67 +48,6 @@ std::string generateSequence(int length) {
         sequence[i] = alphabet[rand() % 4];
     }
     return sequence;
-}
-
-void solveBlockRowMajor(
-    int bRow, int bCol, 
-    int L_A, int L_B,
-    const std::string& seqA, const std::string& seqB,
-    std::vector<int16_t>& globalTop, 
-    std::vector<int16_t>& globalLeft, 
-    int explicitDiagonal,
-    int& threadMax
-) {
-    int rStart = bRow * BLOCK_SIZE;
-    int cStart = bCol * BLOCK_SIZE;
-    int rEnd = std::min(rStart + BLOCK_SIZE, L_A);
-    int cEnd = std::min(cStart + BLOCK_SIZE, L_B);
-    
-    int rLen = rEnd - rStart;
-    int cLen = cEnd - cStart;
-
-    std::vector<int16_t> prevRow(cLen + 1);
-    std::vector<int16_t> currRow(cLen + 1);
-    
-    for(int j=0; j<cLen; j++) prevRow[j+1] = globalTop[cStart + j];
-    prevRow[0] = explicitDiagonal;
-
-    for(int i=0; i<rLen; i++) {
-        int gRow = rStart + i;
-
-        if (gRow + PREFETCH_DIST < L_A) {
-            _mm_prefetch(&seqA[gRow + PREFETCH_DIST], _MM_HINT_T0);
-            _mm_prefetch((const char*)&globalLeft[gRow + (PREFETCH_DIST / 2)], _MM_HINT_T0);
-        }
-        
-        if (bCol == 0) currRow[0] = 0;
-        else currRow[0] = globalLeft[gRow];
-        
-        int left = currRow[0];
-        int up   = prevRow[1];
-        int diag = prevRow[0];
-
-        #pragma omp simd 
-        for(int j=0; j<cLen; j++) {
-            int gCol = cStart + j;
-            int nextUp = (j < cLen - 1) ? prevRow[j+2] : 0;
-            
-            int substitution = (seqA[gRow] == seqB[gCol]) ? matchScore : mismatchPenalty;
-            int val = std::max(diag + substitution, std::max(up + gapPenalty, std::max(left + gapPenalty, 0)));
-            
-            currRow[j+1] = (int16_t)val;
-            if (val > threadMax) threadMax = val;
-            
-            diag = up;
-            left = val;
-            up   = nextUp;
-        }
-        
-        globalLeft[gRow] = currRow[cLen];
-        std::swap(prevRow, currRow);
-    }
-    
-    for(int j=0; j<cLen; j++) globalTop[cStart + j] = prevRow[j+1];
 }
 
 void solveBlockDiagonal(
@@ -203,6 +137,16 @@ int smithWatermanAsync(const std::string& seqA, const std::string& seqB, int len
         int numThreads = omp_get_num_threads();
         int tid = omp_get_thread_num();
 
+        #pragma omp for
+        for (int r = tid; r < numBlockRows; r += numThreads) {
+            int rStart = r * BLOCK_SIZE;
+            int rEnd = std::min(rStart + BLOCK_SIZE, lenA);
+            
+            for (int i = rStart; i < rEnd; ++i) {
+                boundaryLeft[i] = 0; 
+            }
+        }
+
         for (int r = tid; r < numBlockRows; r += numThreads) {
             int currentDiag = 0;
 
@@ -221,11 +165,7 @@ int smithWatermanAsync(const std::string& seqA, const std::string& seqB, int len
                     nextDiag = boundaryTop[lenB - 1];
                 }
                 
-                #if KERNEL_TYPE == ROW_MAJOR
-                    solveBlockRowMajor(r, c, lenA, lenB, seqA, seqB, boundaryTop, boundaryLeft, currentDiag, tMax);
-                #else
-                    solveBlockDiagonal(r, c, lenA, lenB, seqA, seqB, boundaryTop, boundaryLeft, currentDiag, tMax);
-                #endif
+                solveBlockDiagonal(r, c, lenA, lenB, seqA, seqB, boundaryTop, boundaryLeft, currentDiag, tMax);
                 
                 currentDiag = nextDiag;
                 rowProgress[r].store(c, std::memory_order_release);
