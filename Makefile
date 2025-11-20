@@ -1,26 +1,30 @@
-CXX := gcc
-CPP := g++
-CXXFLAGS := -O3 -march=native -mfma -fopenmp -DNDEBUG -g
-LDFLAGS := -fopenmp -lnuma
+CC  := gcc
+CXX := g++
 
-BASELINE_DIR := src/baseline
-OPTIMIZED_DIR := src/optimized
-BUILD_DIR := bin
+CFLAGS   := -O3 -march=native -mfma -fopenmp -DNDEBUG -g
+CXXFLAGS := -O3 -march=native -mfma -fopenmp -DNDEBUG -g -std=c++17
+LDFLAGS  := -fopenmp -lnuma
+
+BASELINE_DIR   := src/baseline
+OPTIMIZED_DIR  := src/optimized
+BUILD_DIR      := bin
+
+BASELINE_TARGET  := $(BUILD_DIR)/sw_baseline
 OPTIMIZED_TARGET := $(BUILD_DIR)/sw_opt
+
+BASELINE_SRC  := $(BASELINE_DIR)/sw_baseline.c
 OPTIMIZED_SRC := $(OPTIMIZED_DIR)/sw_opt.cpp
 
-BASELINE_TARGET := $(BUILD_DIR)/sw_baseline
-BASELINE_SRC := $(BASELINE_DIR)/sw_baseline.c
+all: $(BUILD_DIR) $(OPTIMIZED_TARGET) $(BASELINE_TARGET)
 
-all: $(OPTIMIZED_TARGET) $(BASELINE_TARGET)
+$(BUILD_DIR):
+	mkdir -p $(BUILD_DIR)
 
 $(OPTIMIZED_TARGET): $(OPTIMIZED_SRC)
-	mkdir -p $(BUILD_DIR)
-	$(CPP) $(CXXFLAGS) $(OPTIMIZED_SRC) -o $(OPTIMIZED_TARGET) $(LDFLAGS)
+	$(CXX) $(CXXFLAGS) $< -o $@ $(LDFLAGS)
 
 $(BASELINE_TARGET): $(BASELINE_SRC)
-	mkdir -p $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(BASELINE_SRC) -o $(BASELINE_TARGET) $(LDFLAGS)
+	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
 
 clean:
-	rm -f $(OPTIMIZED_TARGET) $(BASELINE_TARGET)
+	rm -f $(BASELINE_TARGET) $(OPTIMIZED_TARGET)
